@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/screens/home_page.dart';
+import 'package:flutter_application_1/screens/profil_page.dart';
 import 'package:flutter_application_1/screens/survey_page.dart';
 
 class DashboardPage extends StatefulWidget {
