@@ -1,20 +1,20 @@
-import 'package:flutter_application_1/screens/auth/login_page.dart';
-import 'package:flutter_application_1/screens/splash/splash_screen.dart';
 import 'package:go_router/go_router.dart';
-
+import '../screens/auth/login_page.dart';
+import '../screens/dashboard/dashboard_page.dart';
 import 'app_routes.dart';
 
 class AppPages {
-  static final GoRouter router = GoRouter(
-    initialLocation: AppRoutes.splash,
+  static final router = GoRouter(
+    initialLocation: AppRoutes.login,
     routes: [
-      GoRoute(
-        path: AppRoutes.splash,
-        builder: (context, state) => const SplashScreen(),
-      ),
       GoRoute(
         path: AppRoutes.login,
         builder: (context, state) => const LoginPage(),
+      ),
+
+      GoRoute(
+        path: AppRoutes.dashboard,
+        builder: (context, state) => const DashboardPage(),
       ),
     ],
   );
