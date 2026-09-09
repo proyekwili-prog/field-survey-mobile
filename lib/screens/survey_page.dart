@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/screens/auth/login_page.dart';
 import 'package:flutter_application_1/screens/splash/survey_detail_page.dart';
-import 'package:flutter_application_1/screens/survey_detail_page.dart';
+// import 'package:flutter_application_1/screens/splash/survey detail_page.dart';
 import 'package:flutter_application_1/screens/splash/survey_form_page.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
