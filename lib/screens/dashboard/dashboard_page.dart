@@ -13,7 +13,7 @@ int selectedIndex = 0;
 final List<Widget> pages = [
   HomePage(),
   SurveyPage(),
-  ProfilPage(),
+  ProfilePage(),
 ];
 
 class _DashboardPageState extends State<DashboardPage> {

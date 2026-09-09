@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -31,28 +34,65 @@ class _LoginPageState extends State<LoginPage> {
       isLoading = true;
     });
 
-    Uri.parse('hhttps://sijala.biz.id/api/v1/login');
+    try {
+      final url = Uri.parse('https://sijala.biz.id/api/v1/login');
+      final response = await http.post(
+        url,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'email': emailController.text.trim(),
+          'password': passwordController.text,
+        }),
+      );
 
+      final data = jsonDecode(response.body);
 
-    await Future.delayed(const Duration(seconds: 1));
+      if (response.statusCode == 200 && (data['status'] == true || data['success'] == true)) {
+        final prefs = await SharedPreferences.getInstance();
 
-    setState(() {
-      isLoading = false;
-    });
+        // Menyimpan Bearer Token dan data user ke SharedPreferences
+        final String token = data['token'] ?? data['access_token'] ?? data['data']?['token'] ?? '';
+        await prefs.setString('token', token);
 
-   
+        if (data['user'] != null) {
+          await prefs.setString('user', jsonEncode(data['user']));
+        } else if (data['data'] != null) {
+          await prefs.setString('user', jsonEncode(data['data']));
+        }
 
-    if (emailController.text.trim() == "wili@gmail.com" &&
-        passwordController.text == "123456") {
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Login berhasil!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        context.go('/dashboard');
+      } else {
+        String errorMessage = data['message'] ?? "Email atau Password salah";
+        throw Exception(errorMessage);
+      }
+    } catch (e) {
       if (!mounted) return;
-      context.go('/dashboard');
-    } else {
+      String msg = e.toString().replaceAll('Exception: ', '');
+      
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Email atau Password salah"),
+        SnackBar(
+          content: Text(msg),
           backgroundColor: Colors.red,
         ),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -87,7 +127,6 @@ class _LoginPageState extends State<LoginPage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-
                         CircleAvatar(
                           radius: 45,
                           backgroundColor: Colors.blue.shade50,

@@ -1,444 +1,579 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter_application_1/screens/auth/login_page.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Stateful Survey UI',
-      theme: ThemeData(
-        fontFamily: 'Roboto',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF6366F1),
-          primary: const Color(0xFF6366F1),
-          surface: const Color(0xFFF8FAFC),
-        ),
-        useMaterial3: true,
-      ),
-      home: const SurveyPage(),
-    );
-  }
-}
-
-// Model Data Pertanyaan & Opsi
-class SurveyQuestion {
-  final String id;
-  final String question;
-  final String subtitle;
-  final List<SurveyOption> options;
-
-  SurveyQuestion({
-    required this.id,
-    required this.question,
-    required this.subtitle,
-    required this.options,
-  });
-}
-
-class SurveyOption {
-  final String label;
-  final IconData icon;
-
-  SurveyOption({required this.label, required this.icon});
-}
-
-// 1. Deklarasi StatefulWidget
 class SurveyPage extends StatefulWidget {
-  const SurveyPage({super.key});
+  final Map<String, dynamic>? survey;
+
+  const SurveyPage({super.key, this.survey});
 
   @override
   State<SurveyPage> createState() => _SurveyPageState();
 }
 
-// 2. Class State
 class _SurveyPageState extends State<SurveyPage> {
-  // Variable State
-  int _currentIndex = 0;
-  final Map<int, int> _selectedAnswers = {}; // {indexPertanyaan: indexOpsiTerpilih}
+  final formKey = GlobalKey<FormState>();
 
-  // Data Soal
-  final List<SurveyQuestion> _questions = [
-    SurveyQuestion(
-      id: 'q1',
-      question: 'Seberapa sering Anda menggunakan aplikasi kami?',
-      subtitle: 'Pilih satu opsi yang paling menggambarkan rutinitas Anda.',
-      options: [
-        SurveyOption(label: 'Setiap Hari', icon: Icons.bolt_rounded),
-        SurveyOption(label: 'Beberapa Kali Seminggu', icon: Icons.calendar_today_rounded),
-        SurveyOption(label: 'Jarang (1-2x Sebulan)', icon: Icons.history_toggle_off_rounded),
-        SurveyOption(label: 'Baru Pertama Kali', icon: Icons.fiber_new_rounded),
-      ],
-    ),
-    SurveyQuestion(
-      id: 'q2',
-      question: 'Fitur mana yang paling membantu pekerjaan Anda?',
-      subtitle: 'Umpan balik ini membantu kami memprioritaskan pengembangan.',
-      options: [
-        SurveyOption(label: 'Manajemen Tugas', icon: Icons.task_alt_rounded),
-        SurveyOption(label: 'Laporan Lanjutan', icon: Icons.analytics_rounded),
-        SurveyOption(label: 'Kolaborasi Tim', icon: Icons.groups_rounded),
-        SurveyOption(label: 'Integrasi API', icon: Icons.extension_rounded),
-      ],
-    ),
-    SurveyQuestion(
-      id: 'q3',
-      question: 'Bagaimana pengalaman antarmuka (UI) kami?',
-      subtitle: 'Beri penilaian singkat tentang kemudahan navigasi.',
-      options: [
-        SurveyOption(label: 'Sangat Nyaman & Elegan', icon: Icons.sentiment_very_satisfied_rounded),
-        SurveyOption(label: 'Cukup Baik', icon: Icons.sentiment_satisfied_rounded),
-        SurveyOption(label: 'Agak Membingungkan', icon: Icons.sentiment_neutral_rounded),
-        SurveyOption(label: 'Perlu Banyak Perbaikan', icon: Icons.sentiment_dissatisfied_rounded),
-      ],
-    ),
-  ];
+  final titleController = TextEditingController();
+  final descriptionController = TextEditingController();
+  final latitudeController = TextEditingController();
+  final longitudeController = TextEditingController();
 
-  // Handler Lanjut / Selesai
-  void _nextQuestion() {
-    if (_currentIndex < _questions.length - 1) {
+  int? selectedCategoryId;
+  List<Map<String, dynamic>> categories = [];
+  bool isLoadingCategories = true;
+
+  XFile? selectedImage;
+  Uint8List? selectedImageBytes;
+
+  bool isSubmitting = false;
+  bool get isEdit => widget.survey != null;
+
+  static const Color primaryColor = Color(0xFF1E40AF);
+
+  @override
+  void initState() {
+    super.initState();
+    if (isEdit) {
+      final s = widget.survey!;
+      titleController.text = s['title']?.toString() ?? '';
+      descriptionController.text = s['description']?.toString() ?? '';
+      latitudeController.text = s['latitude']?.toString() ?? '';
+      longitudeController.text = s['longitude']?.toString() ?? '';
+      selectedCategoryId = int.tryParse(s['category_id']?.toString() ?? '');
+    }
+    fetchCategories();
+  }
+
+  @override
+  void dispose() {
+    titleController.dispose();
+    descriptionController.dispose();
+    latitudeController.dispose();
+    longitudeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> fetchCategories() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+      final response = await http.get(
+        Uri.parse('https://sijala.biz.id/api/v1/categories'),
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map && decoded['data'] is List) {
+          final List rawList = decoded['data'];
+          if (!mounted) return;
+          setState(() {
+            categories = rawList
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList();
+            isLoadingCategories = false;
+          });
+          return;
+        }
+      }
+    } catch (_) {}
+
+    if (mounted) {
       setState(() {
-        _currentIndex++;
+        isLoadingCategories = false;
       });
-    } else {
-      _showCompletionModal();
     }
   }
 
-  // Handler Kembali
-  void _prevQuestion() {
-    if (_currentIndex > 0) {
-      setState(() {
-        _currentIndex--;
-      });
+  Future<void> pickImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: source,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 80,
+      );
+
+      if (pickedFile != null) {
+        final bytes = await pickedFile.readAsBytes();
+        if (!mounted) return;
+        setState(() {
+          selectedImage = pickedFile;
+          selectedImageBytes = bytes;
+        });
+      }
+    } catch (e) {
+      showErrorSnackBar('Gagal memilih foto.');
     }
   }
 
-  // Modal Dialog Selesai
-  void _showCompletionModal() {
+  void removeSelectedImage() {
+    setState(() {
+      selectedImage = null;
+      selectedImageBytes = null;
+    });
+  }
+
+  void showImageSourceDialog() {
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(32),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF6366F1).withOpacity(0.1),
-                shape: BoxShape.circle,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Pilih Sumber Foto',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
-              child: const Icon(
-                Icons.check_circle_rounded,
-                size: 64,
-                color: Color(0xFF6366F1),
-              ),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Terima Kasih!',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF0F172A),
-              ),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Jawaban Anda telah tersimpan dan sangat berharga bagi kami.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF64748B), fontSize: 14),
-            ),
-            const SizedBox(height: 28),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  setState(() {
-                    _currentIndex = 0;
-                    _selectedAnswers.clear();
-                  });
+              const SizedBox(height: 16),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: primaryColor),
+                title: const Text('Galeri'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  pickImage(ImageSource.gallery);
                 },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: const Text(
-                  'Ulangi Survei',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
               ),
-            ),
-          ],
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: primaryColor),
+                title: const Text('Kamera'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  pickImage(ImageSource.camera);
+                },
+              ),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Future<void> saveSurvey() async {
+    if (!formKey.currentState!.validate()) {
+      showErrorSnackBar('Lengkapi data yang wajib diisi.');
+      return;
+    }
+
+    if (selectedCategoryId == null || selectedCategoryId == 0) {
+      showErrorSnackBar('Kategori survey wajib dipilih.');
+      return;
+    }
+
+    setState(() {
+      isSubmitting = true;
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      if (token.isEmpty) {
+        if (!mounted) return;
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+          (route) => false,
+        );
+        return;
+      }
+
+      final uri = Uri.parse('https://sijala.biz.id/api/v1/surveys/save');
+      final request = http.MultipartRequest('POST', uri);
+
+      request.headers['Accept'] = 'application/json';
+      request.headers['Authorization'] = 'Bearer $token';
+
+      request.fields['title'] = titleController.text.trim();
+      request.fields['category_id'] = selectedCategoryId.toString();
+      request.fields['description'] = descriptionController.text.trim();
+
+      if (latitudeController.text.trim().isNotEmpty) {
+        request.fields['latitude'] = latitudeController.text.trim();
+      }
+      if (longitudeController.text.trim().isNotEmpty) {
+        request.fields['longitude'] = longitudeController.text.trim();
+      }
+
+      if (isEdit) {
+        request.fields['id'] = widget.survey!['id'].toString();
+        request.fields['_method'] = 'PUT';
+      }
+
+      // Perbaikan pengiriman multipart khusus Flutter Web
+      if (selectedImage != null && selectedImageBytes != null) {
+        final filename = selectedImage!.name.isNotEmpty 
+            ? selectedImage!.name 
+            : 'survey_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'photo',
+            selectedImageBytes!,
+            filename: filename,
+            contentType: MediaType('image', 'jpeg'),
+          ),
+        );
+      }
+
+      final streamed = await request.send();
+      final response = await http.Response.fromStream(streamed);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isEdit ? 'Survey berhasil diperbarui!' : 'Survey berhasil disimpan!',
+            ),
+            backgroundColor: const Color(0xFF108981),
+          ),
+        );
+        Navigator.pop(context, true);
+        return;
+      }
+
+      if (response.statusCode == 422) {
+        final decoded = jsonDecode(response.body);
+        final message = decoded['message'] ?? 'Data yang dikirim tidak valid.';
+        throw Exception(message);
+      }
+
+      throw Exception('Gagal menyimpan (Kode: ${response.statusCode})');
+    } catch (e) {
+      if (!mounted) return;
+      showErrorSnackBar(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) {
+        setState(() {
+          isSubmitting = false;
+        });
+      }
+    }
+  }
+
+  void showErrorSnackBar(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: const Color(0xFFEF4444),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final currentQ = _questions[_currentIndex];
-    final progress = (_currentIndex + 1) / _questions.length;
-    final isAnswered = _selectedAnswers.containsKey(_currentIndex);
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9),
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        title: Text(isEdit ? 'Edit Survey' : 'Tambah Survey'),
+        backgroundColor: primaryColor,
+        foregroundColor: Colors.white,
         elevation: 0,
-        leading: _currentIndex > 0
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF0F172A)),
-                onPressed: _prevQuestion,
-              )
-            : null,
-        title: const Text(
-          'Survei Pengguna',
-          style: TextStyle(
-            color: Color(0xFF0F172A),
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
-        centerTitle: true,
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: formKey,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Dynamic Progress Bar
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Pertanyaan ${_currentIndex + 1} dari ${_questions.length}',
-                    style: const TextStyle(
-                      color: Color(0xFF64748B),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                    ),
-                  ),
-                  Text(
-                    '${(progress * 100).toInt()}%',
-                    style: const TextStyle(
-                      color: Color(0xFF6366F1),
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 8,
-                  backgroundColor: const Color(0xFFE2E8F0),
-                  valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF6366F1)),
+              // 1. DATA UTAMA
+              Card(
+                elevation: 0,
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: const BorderSide(color: Color(0xFFE2E8F0)),
                 ),
-              ),
-
-              const SizedBox(height: 28),
-
-              // 2. Dynamic Card Pertanyaan
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  transitionBuilder: (Widget child, Animation<double> animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0.05, 0),
-                          end: Offset.zero,
-                        ).animate(animation),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: Container(
-                    key: ValueKey<int>(_currentIndex),
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(24),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.04),
-                          blurRadius: 20,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          currentQ.question,
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0F172A),
-                            height: 1.3,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          currentQ.subtitle,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: Color(0xFF64748B),
-                          ),
-                        ),
-                        const SizedBox(height: 24),
-
-                        // List Opsi Pilihan dengan State Aktif
-                        Expanded(
-                          child: ListView.separated(
-                            itemCount: currentQ.options.length,
-                            separatorBuilder: (_, __) => const SizedBox(height: 12),
-                            itemBuilder: (context, index) {
-                              final option = currentQ.options[index];
-                              final isSelected = _selectedAnswers[_currentIndex] == index;
-
-                              return InkWell(
-                                onTap: () {
-                                  // Update State saat Opsi Dipilih
-                                  setState(() {
-                                    _selectedAnswers[_currentIndex] = index;
-                                  });
-                                },
-                                borderRadius: BorderRadius.circular(16),
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 200),
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    color: isSelected
-                                        ? const Color(0xFF6366F1).withOpacity(0.08)
-                                        : const Color(0xFFF8FAFC),
-                                    borderRadius: BorderRadius.circular(16),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? const Color(0xFF6366F1)
-                                          : const Color(0xFFE2E8F0),
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(10),
-                                        decoration: BoxDecoration(
-                                          color: isSelected
-                                              ? const Color(0xFF6366F1)
-                                              : Colors.white,
-                                          shape: BoxShape.circle,
-                                          boxShadow: [
-                                            if (!isSelected)
-                                              BoxShadow(
-                                                color: Colors.black.withOpacity(0.05),
-                                                blurRadius: 6,
-                                              ),
-                                          ],
-                                        ),
-                                        child: Icon(
-                                          option.icon,
-                                          size: 20,
-                                          color: isSelected ? Colors.white : const Color(0xFF64748B),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      Expanded(
-                                        child: Text(
-                                          option.label,
-                                          style: TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                                            color: isSelected
-                                                ? const Color(0xFF6366F1)
-                                                : const Color(0xFF334155),
-                                          ),
-                                        ),
-                                      ),
-                                      if (isSelected)
-                                        const Icon(
-                                          Icons.check_circle_rounded,
-                                          color: Color(0xFF6366F1),
-                                          size: 22,
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // 3. Action Button (State Mengontrol Enabled/Disabled)
-              SizedBox(
-                width: double.infinity,
-                height: 56,
-                child: ElevatedButton(
-                  onPressed: isAnswered ? _nextQuestion : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF6366F1),
-                    disabledBackgroundColor: const Color(0xFFCBD5E1),
-                    foregroundColor: Colors.white,
-                    elevation: isAnswered ? 4 : 0,
-                    shadowColor: const Color(0xFF6366F1).withOpacity(0.4),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        _currentIndex == _questions.length - 1 ? 'Kirim Survei' : 'Lanjutkan',
-                        style: const TextStyle(
+                      const Text(
+                        'Data Utama Survey',
+                        style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Icon(
-                        _currentIndex == _questions.length - 1
-                            ? Icons.send_rounded
-                            : Icons.arrow_forward_rounded,
-                        size: 20,
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Judul Survey *',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 6),
+                      TextFormField(
+                        controller: titleController,
+                        decoration: const InputDecoration(
+                          hintText: 'Masukkan judul survey',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.title),
+                        ),
+                        validator: (val) {
+                          if (val == null || val.trim().isEmpty) {
+                            return 'Judul wajib diisi';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Kategori Survey *',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 6),
+                      if (isLoadingCategories)
+                        const LinearProgressIndicator(color: primaryColor)
+                      else
+                        DropdownButtonFormField<int>(
+                          value: selectedCategoryId,
+                          decoration: const InputDecoration(
+                            hintText: 'Pilih Kategori',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.category),
+                          ),
+                          items: categories.map((cat) {
+                            final id = int.tryParse(cat['id']?.toString() ?? '') ?? 0;
+                            final name = cat['name']?.toString() ?? '';
+                            return DropdownMenuItem<int>(
+                              value: id,
+                              child: Text(name),
+                            );
+                          }).toList(),
+                          onChanged: (val) {
+                            setState(() {
+                              selectedCategoryId = val;
+                            });
+                          },
+                          validator: (val) {
+                            if (val == null || val == 0) {
+                              return 'Kategori wajib dipilih';
+                            }
+                            return null;
+                          },
+                        ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'Deskripsi Survey',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 6),
+                      TextFormField(
+                        controller: descriptionController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          hintText: 'Keterangan atau catatan survey...',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.notes),
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
+              const SizedBox(height: 16),
+
+              // 2. FOTO SURVEY (SUDAH DIPERBAIKI)
+              Card(
+                elevation: 0,
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Foto Survey',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (selectedImageBytes != null)
+                        Column(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.memory(
+                                selectedImageBytes!,
+                                height: 180,
+                                width: double.infinity,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: showImageSourceDialog,
+                                    icon: const Icon(Icons.photo_library),
+                                    label: const Text('Ganti Foto'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  onPressed: removeSelectedImage,
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: const Color(0xFFEF4444),
+                                  ),
+                                  icon: const Icon(Icons.delete),
+                                  label: const Text('Hapus'),
+                                ),
+                              ],
+                            ),
+                          ],
+                        )
+                      else
+                        InkWell(
+                          onTap: showImageSourceDialog,
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            height: 120,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF1F5F9),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFCBD5E1)),
+                            ),
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.add_a_photo, size: 36, color: primaryColor),
+                                SizedBox(height: 8),
+                                Text(
+                                  'Ketuk untuk memilih foto',
+                                  style: TextStyle(color: Color(0xFF64748B)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // 3. LOKASI SURVEY
+              Card(
+                elevation: 0,
+                color: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  side: const BorderSide(color: Color(0xFFE2E8F0)),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Lokasi Survey (Koordinat)',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: latitudeController,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true,
+                                signed: true,
+                              ),
+                              decoration: const InputDecoration(
+                                labelText: 'Latitude',
+                                hintText: '-7.3274000',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.my_location),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              controller: longitudeController,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true,
+                                signed: true,
+                              ),
+                              decoration: const InputDecoration(
+                                labelText: 'Longitude',
+                                hintText: '108.2207000',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.explore),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // TOMBOL SIMPAN
+              SizedBox(
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: isSubmitting ? null : saveSurvey,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : Text(
+                          isEdit ? 'Simpan Perubahan' : 'Simpan Survey',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                ),
+              ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
